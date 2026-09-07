@@ -14,10 +14,6 @@ for p in python3.11 python3.12 python3; do if command -v "$p" >/dev/null 2>&1; t
 import sys
 assert sys.version_info >= (3,11), "Python 3.11+ required"
 PY
-STEP="checking FFmpeg"
-if ! command -v ffmpeg >/dev/null 2>&1; then
-  if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then sudo apt-get update && sudo apt-get install -y ffmpeg; fi
-fi
 STEP="creating virtual environment"
 [[ -d .venv ]] || "$PYTHON" -m venv .venv
 source .venv/bin/activate
@@ -27,6 +23,14 @@ STEP="installing CPU PyTorch"
 if ! python -c 'import torch' >/dev/null 2>&1; then python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch>=2.6,<2.11' 'torchvision>=0.21,<0.26'; fi
 STEP="installing MotionForge dependencies"
 python -m pip install -e '.[test]'
+STEP="validating bundled FFmpeg"
+python - <<'PY'
+import imageio_ffmpeg
+from pathlib import Path
+ffmpeg = Path(imageio_ffmpeg.get_ffmpeg_exe())
+assert ffmpeg.is_file(), f"imageio-ffmpeg binary missing: {ffmpeg}"
+print(f"FFmpeg: {ffmpeg}")
+PY
 STEP="creating directories"
 mkdir -p models outputs logs tests/assets
 STEP="creating test asset"
