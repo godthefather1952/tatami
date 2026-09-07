@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; cd "$ROOT"; export MOTIONFORGE_ROOT="$ROOT" HF_HUB_DISABLE_TELEMETRY=1 DO_NOT_TRACK=1
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; cd "$ROOT"
+export MOTIONFORGE_ROOT="$ROOT" HF_HUB_DISABLE_TELEMETRY=1 DO_NOT_TRACK=1
+export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-2}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-2}"
 if [[ ! -d .venv ]]; then echo "MotionForge has not been installed."; echo; echo "Run:"; echo "./install.sh"; exit 1; fi
 source .venv/bin/activate
 python - <<'PY'
