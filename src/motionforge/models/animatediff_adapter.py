@@ -1,10 +1,19 @@
 from __future__ import annotations
-import gc, inspect
+import gc, inspect, os
 from motionforge.config.settings import base_model_dir, motion_model_path, MODEL_DISPLAY_NAME, MODEL_APPROX_GB
 from motionforge.errors import ConfigurationError, MemorySafetyError, ModelLoadError, GenerationError
 from motionforge.media.images import validate_image, fit_image
 from motionforge.system.hardware import detect_hardware, cpu_float16_supported
 from .base import VideoModelBackend
+
+def _trim_process_memory() -> None:
+    gc.collect()
+    try:
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)
+    except Exception:
+        pass
 
 class AnimateDiffLightningAdapter(VideoModelBackend):
     def __init__(self, device: str | None = None, quantization: str = "auto"):
@@ -26,57 +35,111 @@ class AnimateDiffLightningAdapter(VideoModelBackend):
         return False
 
     def load(self) -> None:
-        if self.pipe is not None: return
+        if self.pipe is not None:
+            return
         if not base_model_dir().exists() or not motion_model_path().exists():
             raise ModelLoadError("Model files are missing. Run ./install.sh.")
         hw = detect_hardware()
         if self.device == "cpu" and hw.ram_available_gb < 4.2:
-            raise MemorySafetyError(f"Only {hw.ram_available_gb:.1f} GB RAM is available; CPU_SAFE model loading needs about 4.2 GB free. Close other processes and retry.")
+            raise MemorySafetyError(
+                f"Only {hw.ram_available_gb:.1f} GB RAM is available; CPU_SAFE model loading needs about 4.2 GB free. "
+                "Close other processes and retry."
+            )
         if self.device == "cpu" and not cpu_float16_supported():
-            raise ModelLoadError("This PyTorch/CPU build cannot execute float16 convolution. MotionForge will not fall back to a likely out-of-memory float32 load.")
+            raise ModelLoadError(
+                "This PyTorch/CPU build cannot execute float16 convolution. MotionForge will not fall back "
+                "to a likely out-of-memory float32 load."
+            )
         try:
             import torch
+            from accelerate import init_empty_weights
             from diffusers import AnimateDiffVideoToVideoPipeline, MotionAdapter, EulerDiscreteScheduler
             from safetensors.torch import load_file
+
             dtype = torch.float16
-            adapter = MotionAdapter().to("cpu", dtype=dtype)
+            if self.device == "cpu":
+                torch.set_num_threads(max(1, min(2, os.cpu_count() or 1)))
+                try:
+                    torch.set_num_interop_threads(1)
+                except RuntimeError:
+                    pass
+
+            # Build the adapter on the meta device and assign checkpoint tensors directly.
+            # This avoids allocating a second ~0.9 GB randomly-initialized MotionAdapter.
+            with init_empty_weights():
+                adapter = MotionAdapter()
             state = load_file(str(motion_model_path()), device="cpu")
-            adapter.load_state_dict(state)
+            adapter.load_state_dict(state, strict=True, assign=True)
             del state
-            self.pipe = AnimateDiffVideoToVideoPipeline.from_pretrained(
-                str(base_model_dir()), motion_adapter=adapter, torch_dtype=dtype,
-                variant="fp16", safety_checker=None, feature_extractor=None,
-                local_files_only=True,
-            )
+            _trim_process_memory()
+
+            # Diffusers converts the SD UNet into UNetMotionModel by instantiating a second UNet.
+            # Its constructor otherwise defaults to float32, causing a multi-gigabyte transient spike.
+            # Temporarily setting the default floating dtype to fp16 makes that conversion allocate
+            # the new motion UNet directly at the runtime dtype.
+            previous_default_dtype = torch.get_default_dtype()
+            torch.set_default_dtype(dtype)
+            try:
+                self.pipe = AnimateDiffVideoToVideoPipeline.from_pretrained(
+                    str(base_model_dir()),
+                    motion_adapter=adapter,
+                    torch_dtype=dtype,
+                    variant="fp16",
+                    feature_extractor=None,
+                    local_files_only=True,
+                    low_cpu_mem_usage=True,
+                )
+            finally:
+                torch.set_default_dtype(previous_default_dtype)
+
             self.pipe.scheduler = EulerDiscreteScheduler.from_config(
                 self.pipe.scheduler.config, timestep_spacing="trailing", beta_schedule="linear"
             )
             self.pipe.vae.enable_slicing()
-            try: self.pipe.unet.enable_forward_chunking(chunk_size=1, dim=1)
-            except Exception: pass
-            self.pipe.to(self.device)
+            try:
+                self.pipe.unet.enable_forward_chunking(chunk_size=1, dim=1)
+            except Exception:
+                pass
+
+            # The pipeline copies motion weights into UNetMotionModel during construction but also
+            # keeps the original adapter registered. Inference only needs the copied UNet weights,
+            # so release the duplicate ~0.9 GB adapter before generation.
+            self.pipe.motion_adapter = None
+            del adapter
+            _trim_process_memory()
+
+            if self.device != "cpu":
+                self.pipe.to(self.device)
         except Exception as exc:
             self.pipe = None
+            _trim_process_memory()
             raise ModelLoadError(f"Could not load AnimateDiff locally: {exc}") from exc
 
     def unload(self) -> None:
         self.pipe = None
-        gc.collect()
+        _trim_process_memory()
         try:
             import torch
-            if torch.cuda.is_available(): torch.cuda.empty_cache()
-        except Exception: pass
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
     def generate(self, request, progress=None):
         if request.trajectories:
-            raise GenerationError("Motion-controlled generation is not supported by the active model. Clear trajectories for STANDARD VIDEO generation.")
+            raise GenerationError(
+                "Motion-controlled generation is not supported by the active model. "
+                "Clear trajectories for STANDARD VIDEO generation."
+            )
         if request.quantization == "int8":
             raise ConfigurationError("INT8 is not supported by the active model backend.")
-        if progress: progress("Loading model")
+        if progress:
+            progress("Loading model")
         self.load()
         try:
             import torch
-            if progress: progress("Encoding image")
+            if progress:
+                progress("Encoding image")
             image = fit_image(validate_image(request.image_path), request.width, request.height)
             source_video = [image.copy() for _ in range(request.num_frames)]
             generator = torch.Generator(device=self.device).manual_seed(request.seed)
@@ -94,11 +157,14 @@ class AnimateDiffLightningAdapter(VideoModelBackend):
             )
             if "enforce_inference_steps" in inspect.signature(self.pipe.__call__).parameters:
                 kwargs["enforce_inference_steps"] = True
-            if progress: progress("Generating frames")
+            if progress:
+                progress("Generating frames")
             with torch.inference_mode():
                 output = self.pipe(**kwargs)
-            if progress: progress("Decoding")
+            if progress:
+                progress("Decoding")
             return output.frames[0]
         except Exception as exc:
-            if isinstance(exc, (GenerationError, ConfigurationError)): raise
+            if isinstance(exc, (GenerationError, ConfigurationError)):
+                raise
             raise GenerationError(f"Local model generation failed: {exc}") from exc
