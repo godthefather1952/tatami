@@ -1,0 +1,14 @@
+.venv/
+models/*
+!models/.gitkeep
+outputs/*
+!outputs/.gitkeep
+logs/*
+!logs/.gitkeep
+__pycache__/
+*.pyc
+.pytest_cache/
+.cache/
+*.mp4
+*.egg-info/
+.DS_Store

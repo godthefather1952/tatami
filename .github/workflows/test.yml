@@ -1,0 +1,58 @@
+name: MotionForge Acceptance
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unit-and-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install without weights
+        env:
+          MOTIONFORGE_SKIP_MODEL_DOWNLOAD: "1"
+        run: ./install.sh
+      - name: Start script guard without weights
+        run: |
+          if ./start.sh; then echo "start.sh should have rejected missing weights"; exit 1; else echo "missing-model guard PASS"; fi
+
+  real-cpu-generation:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Full one-command install
+        run: ./install.sh
+      - name: Idempotent second install
+        run: ./install.sh
+      - name: Real CPU generation
+        run: .venv/bin/python scripts/smoke_test.py --generation
+      - name: Boot MotionForge and probe health
+        run: |
+          ./start.sh > /tmp/motionforge-start.log 2>&1 &
+          pid=$!
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:7860/health > /tmp/health.json; then break; fi
+            sleep 2
+          done
+          cat /tmp/health.json
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/health.json'))
+          assert d['status']=='ok' and d['model_available'] is True
+          PY
+          kill "$pid" || true
+          cat /tmp/motionforge-start.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: motionforge-generation-output
+          path: |
+            outputs/**/*.mp4
+            outputs/**/*.json
+            logs/motionforge.log
+          if-no-files-found: warn
