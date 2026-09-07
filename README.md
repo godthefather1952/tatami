@@ -25,7 +25,9 @@ Selective downloads keep the default payload around 3.1 GB rather than downloadi
 
 ## CPU behavior
 
-CPU generation prioritizes compatibility over speed. Short, low-resolution clips are recommended. The `CPU_SAFE` preset is intentionally tiny: 128×128, 4 frames, 4 fps, 2 distilled denoising steps. MotionForge does not publish a fabricated timing estimate because runtime varies sharply by Codespace CPU.
+CPU generation prioritizes compatibility over speed. Short, low-resolution clips are recommended. The `CPU_SAFE` preset is intentionally tiny: 64×64, 4 frames, 4 fps, 2 distilled denoising steps. This one-second acceptance preset is designed for low-memory 8 GB Codespaces; visual quality is deliberately secondary to completing genuine local inference. MotionForge does not publish a fabricated timing estimate because runtime varies sharply by Codespace CPU.
+
+The CPU loader creates the motion adapter without allocating duplicate initialization weights, builds the converted motion UNet directly in fp16, frees the duplicate adapter after its weights are copied into the motion UNet, and constrains CPU allocator/thread overhead. These measures specifically target the peak-memory behavior of low-memory Codespaces.
 
 `CPU_STANDARD` increases resolution/frame count and requires more memory. CUDA is used when available, but is never required.
 
@@ -39,7 +41,7 @@ Generated files are stored under `outputs/YYYY-MM-DD/` as an H.264 MP4 (with MPE
 
 ## Offline operation
 
-Network access is needed only during installation for apt/pip and public model downloads. Once dependencies and weights are present, normal generation runs locally and can operate offline. No telemetry, analytics, inference provider, API key, or secret is required.
+Network access is needed only during installation for pip and public model downloads. Once dependencies and weights are present, normal generation runs locally and can operate offline. No telemetry, analytics, inference provider, API key, or secret is required.
 
 ## Diagnostics and tests
 
@@ -55,6 +57,8 @@ Network access is needed only during installation for apt/pip and public model d
 
 If installation fails, rerun `./install.sh`; downloads are resumable. If RAM is low, stop other processes and use `CPU_SAFE`. MotionForge blocks model loading when available RAM is below its conservative floor instead of risking a Codespace crash. If port 7860 is occupied, the app selects the next free port from 7861–7869 and prints it.
 
+If a previous version was killed while loading the model on an 8 GB Codespace, pull the latest `main` branch and restart MotionForge. The model files do not need to be downloaded again.
+
 If model files are missing, rerun `./install.sh`. The default models are public and should not request a Hugging Face token.
 
 ## Architecture
@@ -65,7 +69,7 @@ Trajectory code lives separately under `src/motionforge/motion/` so future backe
 
 ## Updating
 
-Pull/download the newer repository version, then rerun `./install.sh`. Existing outputs are never deleted.
+Pull/download the newer repository version, then rerun `./install.sh` only when dependencies or model assets changed. Existing outputs are never deleted.
 
 ## Roadmap
 
