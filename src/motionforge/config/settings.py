@@ -25,7 +25,7 @@ class GenerationPreset:
     min_ram_gb: float
 
 PRESETS = {
-    "CPU_SAFE": GenerationPreset("CPU_SAFE", 128, 128, 4, 4, 2, 0.85, 1.0, 4.5),
+    "CPU_SAFE": GenerationPreset("CPU_SAFE", 64, 64, 4, 4, 2, 0.85, 1.0, 4.5),
     "CPU_STANDARD": GenerationPreset("CPU_STANDARD", 256, 256, 8, 6, 2, 0.85, 1.0, 7.0),
     "GPU_ACCELERATED": GenerationPreset("GPU_ACCELERATED", 384, 384, 12, 8, 2, 0.85, 1.0, 8.0),
 }
