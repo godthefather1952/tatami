@@ -1,10 +1,6 @@
 {
   "name": "MotionForge",
   "image": "mcr.microsoft.com/devcontainers/python:1-3.11-bookworm",
-  "features": {
-    "ghcr.io/devcontainers/features/common-utils:2": {}
-  },
-  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y ffmpeg build-essential",
   "forwardPorts": [7860],
   "portsAttributes": {
     "7860": {
