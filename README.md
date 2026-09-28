@@ -1,76 +1,200 @@
 # MotionForge
 
-Local CPU-compatible AI video generation.
+A browser-based, self-hosted image-to-video AI app.
 
-No API keys.  
-No remote inference.  
-Designed for GitHub Codespaces.
+**No API keys. No Hugging Face token. No remote inference service.**
 
-## Quick start
+MotionForge downloads public open-weight models anonymously, runs inference on the machine hosting the app, and serves a mobile-friendly web interface.
 
-1. Create/open this repository in GitHub Codespaces.
-2. Open the terminal.
-3. Run `./install.sh`.
-4. After installation finishes, run `./start.sh`.
-5. Click the forwarded port named **MotionForge** / **Open in Browser**.
-6. Upload PNG/JPEG/WEBP, enter a prompt, and click **GENERATE STANDARD VIDEO**.
+## Fastest way to run it
 
-The server binds to `0.0.0.0:7860`; the Codespaces port remains private by default. MotionForge never opens a browser process inside the container.
+### GitHub Codespaces
 
-## What the model does
+1. Open this repository on GitHub.
+2. Choose **Code → Codespaces → Create codespace on main**.
+3. In the Codespaces terminal, run:
 
-The default backend combines the public Stable Diffusion 1.5 fp16 components with ByteDance AnimateDiff-Lightning 2-step. MotionForge creates a short source video by repeating the uploaded image, then runs **text-guided local video-to-video diffusion**. The uploaded image is therefore the starting video and the prompt guides denoising. This is genuine model inference, not pan/zoom, interpolation, prerecorded video, or a remote API.
+```bash
+./start.sh
+```
 
-Selective downloads keep the default payload around 3.1 GB rather than downloading every precision/format variant in the upstream repositories. See `MODEL_LICENSES.md` for model licensing.
+That is the only command required.
 
-## CPU behavior
+On a first launch, `start.sh` automatically:
 
-CPU generation prioritizes compatibility over speed. Short, low-resolution clips are recommended. The `CPU_SAFE` preset is intentionally tiny: 64×64, 4 frames, 4 fps, 2 distilled denoising steps. This one-second acceptance preset is designed for low-memory 8 GB Codespaces; visual quality is deliberately secondary to completing genuine local inference. MotionForge does not publish a fabricated timing estimate because runtime varies sharply by Codespace CPU.
+- creates the Python environment if needed,
+- installs MotionForge,
+- anonymously downloads the public model files,
+- validates the installation,
+- launches the web app.
 
-The CPU loader creates the motion adapter without allocating duplicate initialization weights, builds the converted motion UNet directly in fp16, frees the duplicate adapter after its weights are copied into the motion UNet, and constrains CPU allocator/thread overhead. These measures specifically target the peak-memory behavior of low-memory Codespaces.
+When port **7860** appears, open the forwarded port named **MotionForge**.
 
-`CPU_STANDARD` increases resolution/frame count and requires more memory. CUDA is used when available, but is never required.
+The devcontainer marks port 7860 public, so the resulting web-app URL does not require a MotionForge login or API token. The Codespace itself still has to be running.
 
-## Motion paths
+> A public port means anyone with the URL can submit generations while your Codespace is running. Change the port visibility to private if you do not want that.
 
-MotionForge v0.1.0 includes normalized trajectory data structures, serialization, interpolation, and an editor that can add/move/remove keyframes across multiple trajectory IDs. The active AnimateDiff-Lightning backend does **not** accept sparse point trajectories, so **MOTION CONTROLLED** generation is disabled. Standard generation refuses to proceed when trajectories are present, preventing silent ignored controls.
+## How it works
 
-## Outputs
+Upload a PNG, JPEG, or WEBP image and enter a motion prompt.
 
-Generated files are stored under `outputs/YYYY-MM-DD/` as an H.264 MP4 (with MPEG-4 fallback) plus a JSON metadata file containing prompts, seed, model/backend, resolution, frame count, FPS, steps, duration, trajectories, and hardware information.
+MotionForge then:
 
-## Offline operation
+1. validates and resizes the image,
+2. repeats it into a short source clip,
+3. runs local text-guided video-to-video diffusion,
+4. generates new frames,
+5. encodes the result as an MP4,
+6. writes a JSON metadata file beside the video.
 
-Network access is needed only during installation for pip and public model downloads. Once dependencies and weights are present, normal generation runs locally and can operate offline. No telemetry, analytics, inference provider, API key, or secret is required.
+The active backend is:
 
-## Diagnostics and tests
+- **Stable Diffusion 1.5**
+- **ByteDance AnimateDiff-Lightning 2-step**
+- Diffusers `AnimateDiffVideoToVideoPipeline`
 
-- `python scripts/diagnose.py`
-- `python scripts/verify_install.py`
-- `python scripts/smoke_test.py`
-- `python scripts/smoke_test.py --generation` — smallest real model generation
-- `pytest`
+The default model payload is about **3.1 GB**.
 
-`./install.sh` runs diagnostics, unit tests, smoke tests, and install verification automatically. It is safe to rerun and skips already-cached Hugging Face files.
+## No-token model downloads
 
-## Troubleshooting
+MotionForge explicitly downloads the public model repositories anonymously.
 
-If installation fails, rerun `./install.sh`; downloads are resumable. If RAM is low, stop other processes and use `CPU_SAFE`. MotionForge blocks model loading when available RAM is below its conservative floor instead of risking a Codespace crash. If port 7860 is occupied, the app selects the next free port from 7861–7869 and prints it.
+The downloader passes `token=False` and sets:
 
-If a previous version was killed while loading the model on an 8 GB Codespace, pull the latest `main` branch and restart MotionForge. The model files do not need to be downloaded again.
+```text
+HF_HUB_DISABLE_IMPLICIT_TOKEN=1
+```
 
-If model files are missing, rerun `./install.sh`. The default models are public and should not request a Hugging Face token.
+A Hugging Face account is not required for the configured models.
+
+Internet access is needed for the initial package/model download. Once dependencies and weights are present, inference is local and can run without an inference API.
+
+## Hardware presets
+
+| Preset | Resolution | Frames | FPS | Steps | Intended use |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `CPU_SAFE` | 64×64 | 4 | 4 | 2 | Low-memory CPU acceptance mode |
+| `CPU_STANDARD` | 256×256 | 8 | 6 | 2 | Larger CPU machines |
+| `GPU_ACCELERATED` | 384×384 | 12 | 8 | 2 | CUDA GPU |
+
+The app detects the available hardware and recommends a preset automatically.
+
+`CPU_SAFE` intentionally prioritizes completing real local model inference over visual quality. It is a small proof-of-function mode for constrained environments.
+
+## Web interface
+
+The browser UI includes:
+
+- source-image upload,
+- motion prompt,
+- optional negative prompt,
+- hardware preset,
+- deterministic seed,
+- generation status,
+- video preview,
+- MP4 download,
+- generation-metadata download,
+- hardware/model status.
+
+The interface is built with Gradio and served through FastAPI/Uvicorn on `0.0.0.0:7860`. If that port is busy, MotionForge searches 7861–7869.
+
+## Important motion-control status
+
+MotionForge contains trajectory data structures, serialization, interpolation, and an experimental trajectory editor.
+
+The current AnimateDiff-Lightning backend **does not support true point-trajectory conditioning**.
+
+For that reason, the web app does not pretend that the feature works. If trajectory data is present during standard generation, MotionForge refuses the request instead of silently ignoring it.
+
+A future backend can implement `VideoModelBackend.supports_motion_control()` and consume those trajectories without requiring the UI/inference boundary to be redesigned.
+
+## Output files
+
+Each generation creates:
+
+```text
+outputs/YYYY-MM-DD/
+  motionforge_YYYYMMDD_HHMMSS_seed1234.mp4
+  motionforge_YYYYMMDD_HHMMSS_seed1234.json
+```
+
+Metadata includes:
+
+- prompt and negative prompt,
+- seed,
+- model/backend,
+- resolution,
+- frame count,
+- FPS,
+- denoising steps,
+- strength,
+- guidance scale,
+- generation duration,
+- trajectories,
+- hardware information.
 
 ## Architecture
 
-UI → validated `GenerationRequest` → `InferencePipeline` → replaceable `VideoModelBackend` → local AnimateDiff adapter → frames → FFmpeg MP4 → browser preview/download.
+```text
+Browser
+  ↓
+Gradio web UI
+  ↓
+GenerationRequest
+  ↓
+InferencePipeline
+  ↓
+VideoModelBackend
+  ↓
+AnimateDiff-Lightning + Stable Diffusion 1.5
+  ↓
+Generated frames
+  ↓
+FFmpeg
+  ↓
+MP4 + JSON metadata
+```
 
-Trajectory code lives separately under `src/motionforge/motion/` so future backends can implement true point/flow/pose/camera conditioning without changing the UI-to-inference boundary.
+The model implementation is behind a replaceable backend interface, so newer video models can be added without rebuilding the web app.
 
-## Updating
+## Manual installation
 
-Pull/download the newer repository version, then rerun `./install.sh` only when dependencies or model assets changed. Existing outputs are never deleted.
+If you prefer separate installation and startup:
 
-## Roadmap
+```bash
+./install.sh
+./start.sh
+```
 
-Future versions may add a trajectory-conditioned backend, reference-video motion extraction, pose/camera control, motion brushes, identity-preservation adapters, and MotionForge-owned motion LoRAs/control networks. v0.1.0 intentionally prioritizes a tiny real local generation path first.
+The installer is idempotent and cached model downloads are reused.
+
+## Diagnostics
+
+```bash
+python scripts/diagnose.py
+python scripts/verify_install.py
+python scripts/smoke_test.py
+python scripts/smoke_test.py --generation
+pytest
+```
+
+## Resource protection
+
+MotionForge includes several safeguards for constrained hosts:
+
+- FP16 model weights,
+- lazy model loading,
+- low-memory UNet construction,
+- duplicate motion-adapter release,
+- VAE slicing,
+- CPU thread limits,
+- allocator cleanup,
+- free-RAM checks before model loading.
+
+On CPU, model loading is blocked when available memory is below the conservative safety floor instead of intentionally risking a host crash.
+
+## Licensing
+
+MotionForge source code is Apache-2.0.
+
+Third-party model weights retain their own licenses. See [MODEL_LICENSES.md](MODEL_LICENSES.md) before redistributing model weights or using them in another product.
