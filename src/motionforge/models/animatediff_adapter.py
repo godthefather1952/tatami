@@ -150,8 +150,8 @@ class AnimateDiffLightningAdapter(VideoModelBackend):
                 height=request.height,
                 width=request.width,
                 num_inference_steps=request.steps,
-                guidance_scale=1.0,
-                strength=0.85,
+                guidance_scale=request.guidance_scale,
+                strength=request.strength,
                 generator=generator,
                 output_type="pil",
             )
