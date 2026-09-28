@@ -12,6 +12,8 @@ class GenerationRequest(BaseModel):
     num_frames: int = Field(ge=2, le=32)
     fps: int = Field(ge=1, le=30)
     steps: int = Field(ge=1, le=20)
+    strength: float = Field(default=0.85, ge=0.0, le=1.0)
+    guidance_scale: float = Field(default=1.0, ge=0.0, le=20.0)
     trajectories: list[Trajectory] = Field(default_factory=list)
     preset: str = "CPU_SAFE"
     quantization: str = "auto"
